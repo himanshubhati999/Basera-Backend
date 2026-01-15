@@ -77,7 +77,10 @@ exports.getAllProperties = async (req, res) => {
     res.json({ properties });
   } catch (error) {
     console.error('Get properties error:', error);
-    res.status(500).json({ message: 'Server error' });
+    res.status(500).json({ 
+      message: 'Server error', 
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined 
+    });
   }
 };
 
