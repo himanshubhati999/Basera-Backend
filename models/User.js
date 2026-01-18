@@ -31,7 +31,7 @@ const userSchema = new mongoose.Schema({
     default: 'user'
   },
   wishlist: {
-    type: [Number],
+    type: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Property' }],
     default: []
   },
   createdAt: {
