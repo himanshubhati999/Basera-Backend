@@ -3,10 +3,13 @@ const Property = require('../models/Property');
 // Create a new property
 exports.createProperty = async (req, res) => {
   try {
+    console.log('Received property data:', req.body);
+    
     const {
       title,
       description,
       propertyType,
+      listingType,
       price,
       location,
       area,
@@ -14,14 +17,24 @@ exports.createProperty = async (req, res) => {
       bathrooms,
       images,
       amenities,
+      status,
+      isFeatured,
+      isPublished,
+      content,
+      projectDetails,
+      seo,
+      youtubeVideo,
+      privateNotes,
+      categories,
       ownerPhone,
       ownerEmail
     } = req.body;
 
     // Validate required fields
     if (!title || !description || !propertyType || !price || !ownerPhone || !ownerEmail) {
+      console.log('Validation failed:', { title, description, propertyType, price, ownerPhone, ownerEmail });
       return res.status(400).json({ 
-        message: 'Please provide all required fields' 
+        message: 'Please provide all required fields (title, description, propertyType, price, ownerPhone, ownerEmail)' 
       });
     }
 
@@ -29,6 +42,7 @@ exports.createProperty = async (req, res) => {
       title,
       description,
       propertyType,
+      listingType: listingType || 'sale',
       price,
       location,
       area,
@@ -36,12 +50,23 @@ exports.createProperty = async (req, res) => {
       bathrooms,
       images,
       amenities,
+      status: status || 'available',
+      isFeatured: isFeatured || false,
+      isPublished: isPublished || false,
+      content,
+      projectDetails,
+      seo,
+      youtubeVideo,
+      privateNotes,
+      categories,
       ownerPhone,
       ownerEmail,
       postedBy: req.userId // From auth middleware
     });
 
     await property.save();
+    
+    console.log('Property created successfully:', property._id);
 
     res.status(201).json({
       message: 'Property posted successfully',

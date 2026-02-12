@@ -49,10 +49,14 @@ const propertySchema = new mongoose.Schema({
   amenities: [String],
   status: {
     type: String,
-    enum: ['available', 'sold', 'rented', 'under-contract', 'pending', 'preparing-selling', 'selling', 'not-available'],
+    enum: ['available', 'sold', 'rented', 'under-contract', 'pending', 'preparing-selling', 'selling', 'not-available', 'upcoming', 'ongoing', 'completed'],
     default: 'available'
   },
   isFeatured: {
+    type: Boolean,
+    default: false
+  },
+  isPublished: {
     type: Boolean,
     default: false
   },

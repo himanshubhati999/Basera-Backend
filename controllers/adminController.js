@@ -159,6 +159,33 @@ exports.toggleFeaturedStatus = async (req, res) => {
   }
 };
 
+// Toggle project published status
+exports.togglePublishedStatus = async (req, res) => {
+  try {
+    const property = await Property.findById(req.params.id);
+    
+    if (!property) {
+      return res.status(404).json({ message: 'Property/Project not found' });
+    }
+
+    property.isPublished = !property.isPublished;
+    property.updatedAt = Date.now();
+    await property.save();
+
+    const updatedProperty = await Property.findById(req.params.id)
+      .populate('postedBy', 'name email');
+
+    res.json({
+      success: true,
+      message: `Project ${property.isPublished ? 'published' : 'saved as draft'} successfully`,
+      property: updatedProperty
+    });
+  } catch (error) {
+    console.error('Toggle published status error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
 // Delete user by admin
 exports.deleteUser = async (req, res) => {
   try {

@@ -15,6 +15,7 @@ router.get('/properties', protect, adminAuth, adminController.getAllPropertiesWi
 router.delete('/properties/:id', protect, adminAuth, adminController.deleteProperty);
 router.put('/properties/:id/status', protect, adminAuth, adminController.updatePropertyStatus);
 router.put('/properties/:id/featured', protect, adminAuth, adminController.toggleFeaturedStatus);
+router.put('/properties/:id/published', protect, adminAuth, adminController.togglePublishedStatus);
 
 // Users management
 router.get('/users', protect, adminAuth, adminController.getAllUsers);
