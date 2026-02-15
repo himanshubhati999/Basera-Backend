@@ -43,6 +43,10 @@ const pageSchema = new mongoose.Schema({
     type: String,
     trim: true
   },
+  tags: [{
+    type: String,
+    trim: true
+  }],
   featuredImage: {
     type: String,
     trim: true
