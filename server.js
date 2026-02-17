@@ -104,8 +104,7 @@ app.get('/api/debug', (req, res) => {
   });
 });
 
-// Error handling middleware
-appServe React app for all non-API routes (must be AFTER API routes)
+// Serve React app for all non-API routes (must be AFTER API routes)
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'build', 'index.html'));
 });
