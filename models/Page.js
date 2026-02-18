@@ -68,8 +68,7 @@ const pageSchema = new mongoose.Schema({
   timestamps: true
 });
 
-// Index for faster queries
-pageSchema.index({ slug: 1 });
+// Index for faster queries (slug already indexed via unique: true)
 pageSchema.index({ status: 1 });
 pageSchema.index({ createdAt: -1 });
 
