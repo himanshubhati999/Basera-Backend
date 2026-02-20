@@ -84,6 +84,7 @@ app.use('/api/pages', require('./routes/page'));
 app.use('/api/upload', require('./routes/upload'));
 app.use('/api/reviews', require('./routes/review'));
 app.use('/api/analytics', require('./routes/analytics'));
+app.use('/api/testimonials', require('./routes/testimonial'));
 
 // Serve static files from React build folder
 app.use(express.static(path.join(__dirname, 'build')));

@@ -60,3 +60,40 @@ exports.authorize = (...roles) => {
     next();
   };
 };
+
+// Optional authentication - allows both authenticated and guest users
+exports.optionalAuth = async (req, res, next) => {
+  let token;
+
+  // Check if token exists in headers
+  if (
+    req.headers.authorization &&
+    req.headers.authorization.startsWith('Bearer')
+  ) {
+    token = req.headers.authorization.split(' ')[1];
+  }
+
+  // If no token, continue as guest user
+  if (!token) {
+    req.user = null;
+    return next();
+  }
+
+  try {
+    // Verify token
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+    // Get user from token
+    req.user = await User.findById(decoded.id);
+
+    if (req.user) {
+      req.userId = decoded.id;
+    }
+
+    next();
+  } catch (error) {
+    // If token is invalid, continue as guest user
+    req.user = null;
+    next();
+  }
+};
