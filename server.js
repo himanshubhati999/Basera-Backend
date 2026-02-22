@@ -7,6 +7,14 @@ const connectDB = require('./config/db');
 // Load environment variables
 dotenv.config();
 
+// Debug: Log environment on startup
+console.log('=== SERVER STARTUP ===');
+console.log('NODE_ENV:', process.env.NODE_ENV);
+console.log('MONGODB_URI exists:', !!process.env.MONGODB_URI);
+console.log('MONGODB_URI length:', process.env.MONGODB_URI ? process.env.MONGODB_URI.length : 0);
+console.log('PORT:', process.env.PORT || 3000);
+console.log('======================');
+
 // Initialize express app
 const app = express();
 
@@ -66,7 +74,11 @@ const ensureDbConnection = async (req, res, next) => {
   if (!dbConnected) {
     return res.status(503).json({ 
       success: false, 
-      message: 'Database not available. Please try again later.' 
+      message: 'Database not available. Please try again later.',
+      error: 'Max connection attempts exceeded',
+      mongoUri: process.env.MONGODB_URI ? 'exists' : 'missing',
+      nodeEnv: process.env.NODE_ENV,
+      attempts: connectionAttempts
     });
   }
   
