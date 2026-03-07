@@ -1,5 +1,6 @@
 const Property = require('../models/Property');
 const User = require('../models/User');
+const { deleteMultipleImages } = require('./uploadController');
 
 // Create a new property
 exports.createProperty = async (req, res) => {
@@ -195,6 +196,15 @@ exports.deleteProperty = async (req, res) => {
     // Check if the user is the owner or an admin
     if (property.postedBy.toString() !== req.userId && user?.role !== 'admin') {
       return res.status(403).json({ message: 'Not authorized to delete this property' });
+    }
+
+    // Delete associated images before deleting property
+    const imagesToDelete = [...(property.images || [])];
+    if (property.seo?.image) {
+      imagesToDelete.push(property.seo.image);
+    }
+    if (imagesToDelete.length > 0) {
+      await deleteMultipleImages(imagesToDelete);
     }
 
     await Property.findByIdAndDelete(req.params.id);

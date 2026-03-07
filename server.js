@@ -125,6 +125,9 @@ app.use('/api/reviews', ensureDbConnection, require('./routes/review'));
 app.use('/api/analytics', ensureDbConnection, require('./routes/analytics'));
 app.use('/api/testimonials', ensureDbConnection, require('./routes/testimonial'));
 
+// Serve uploaded images (static files)
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
 // Serve static files from React build folder (after API routes)
 app.use(express.static(path.join(__dirname, 'build')));
 

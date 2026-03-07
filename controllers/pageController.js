@@ -1,4 +1,5 @@
 const Page = require('../models/Page');
+const { deleteMultipleImages } = require('./uploadController');
 
 // Get all pages
 exports.getAllPages = async (req, res) => {
@@ -237,7 +238,7 @@ exports.updatePageStatus = async (req, res) => {
 // Delete page
 exports.deletePage = async (req, res) => {
   try {
-    const page = await Page.findByIdAndDelete(req.params.id);
+    const page = await Page.findById(req.params.id);
     
     if (!page) {
       return res.status(404).json({
@@ -245,6 +246,13 @@ exports.deletePage = async (req, res) => {
         message: 'Page not found'
       });
     }
+    
+    // Delete associated featured image if exists
+    if (page.featuredImage) {
+      await deleteMultipleImages([page.featuredImage]);
+    }
+    
+    await Page.findByIdAndDelete(req.params.id);
     
     res.json({
       success: true,
@@ -270,6 +278,16 @@ exports.bulkDeletePages = async (req, res) => {
         success: false,
         message: 'Please provide an array of page IDs'
       });
+    }
+    
+    // Get all pages to delete their images
+    const pages = await Page.find({ _id: { $in: ids } });
+    const imagesToDelete = pages
+      .filter(page => page.featuredImage)
+      .map(page => page.featuredImage);
+    
+    if (imagesToDelete.length > 0) {
+      await deleteMultipleImages(imagesToDelete);
     }
     
     const result = await Page.deleteMany({ _id: { $in: ids } });

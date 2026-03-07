@@ -1,5 +1,6 @@
 const Property = require('../models/Property');
 const User = require('../models/User');
+const { deleteMultipleImages } = require('./uploadController');
 
 // Get all properties with owner contact information
 exports.getAllPropertiesWithContact = async (req, res) => {
@@ -92,6 +93,15 @@ exports.deleteProperty = async (req, res) => {
 
     if (!property) {
       return res.status(404).json({ message: 'Property not found' });
+    }
+
+    // Delete associated images before deleting property
+    const imagesToDelete = [...(property.images || [])];
+    if (property.seo?.image) {
+      imagesToDelete.push(property.seo.image);
+    }
+    if (imagesToDelete.length > 0) {
+      await deleteMultipleImages(imagesToDelete);
     }
 
     await Property.findByIdAndDelete(req.params.id);
