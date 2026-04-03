@@ -2,6 +2,8 @@ const fs = require('fs').promises;
 const path = require('path');
 const sharp = require('sharp');
 const crypto = require('crypto');
+const ftp = require('basic-ftp');
+const { Readable } = require('stream');
 
 // Create uploads directory if it doesn't exist
 const uploadsDir = path.join(__dirname, '../uploads');
@@ -13,12 +15,128 @@ const ensureUploadsDir = async () => {
   }
 };
 
+const isFtpConfigured = () => {
+  return Boolean(
+    process.env.HOSTINGER_FTP_HOST &&
+    process.env.HOSTINGER_FTP_USERNAME &&
+    process.env.HOSTINGER_FTP_PASSWORD
+  );
+};
+
+const getFtpRemotePath = () => {
+  const remotePath = process.env.HOSTINGER_FTP_REMOTE_PATH || '/nodejs/uploads';
+  return remotePath.replace(/\\/g, '/').replace(/\/$/, '');
+};
+
+const getFtpMirrorPath = () => {
+  const mirrorPath = (process.env.HOSTINGER_FTP_MIRROR_PATH || '').trim();
+  if (!mirrorPath) return null;
+  return mirrorPath.replace(/\\/g, '/').replace(/\/$/, '');
+};
+
+const getPublicUploadBaseUrl = (req) => {
+  const ftpPublicUrl = (process.env.HOSTINGER_PUBLIC_URL || '').replace(/\/$/, '');
+  if (isFtpConfigured() && ftpPublicUrl) {
+    return ftpPublicUrl;
+  }
+
+  return `${getPublicBaseUrl(req)}/uploads`;
+};
+
+const withFtpClient = async (callback) => {
+  const client = new ftp.Client(15000);
+  client.ftp.verbose = false;
+
+  try {
+    await client.access({
+      host: process.env.HOSTINGER_FTP_HOST,
+      port: Number(process.env.HOSTINGER_FTP_PORT || 21),
+      user: process.env.HOSTINGER_FTP_USERNAME,
+      password: process.env.HOSTINGER_FTP_PASSWORD,
+      secure: process.env.HOSTINGER_FTP_SECURE === 'true'
+    });
+
+    return await callback(client);
+  } finally {
+    client.close();
+  }
+};
+
+const uploadBufferToFtp = async (buffer, filename) => {
+  const remoteDirectory = getFtpRemotePath();
+  const mirrorDirectory = getFtpMirrorPath();
+
+  await withFtpClient(async (client) => {
+    await client.ensureDir(remoteDirectory);
+    await client.uploadFrom(Readable.from(buffer), filename);
+
+    if (mirrorDirectory && mirrorDirectory !== remoteDirectory) {
+      await client.ensureDir(mirrorDirectory);
+      await client.uploadFrom(Readable.from(buffer), filename);
+    }
+  });
+};
+
+const deleteFileFromFtp = async (filename) => {
+  const remoteFilePath = path.posix.join(getFtpRemotePath(), filename);
+  const mirrorDirectory = getFtpMirrorPath();
+  const mirrorFilePath = mirrorDirectory ? path.posix.join(mirrorDirectory, filename) : null;
+
+  try {
+    await withFtpClient(async (client) => {
+      await client.remove(remoteFilePath);
+
+      if (mirrorFilePath) {
+        try {
+          await client.remove(mirrorFilePath);
+        } catch (error) {
+          const msg = String(error?.message || '').toLowerCase();
+          if (!msg.includes('no such file') && !msg.includes('550')) {
+            throw error;
+          }
+        }
+      }
+    });
+    return true;
+  } catch (error) {
+    const msg = String(error?.message || '').toLowerCase();
+    if (msg.includes('no such file') || msg.includes('550')) {
+      return false;
+    }
+    throw error;
+  }
+};
+
+const optimizeImageToBuffer = async (buffer) => {
+  return sharp(buffer)
+    .resize(1920, 1080, {
+      fit: 'inside',
+      withoutEnlargement: true
+    })
+    .jpeg({ quality: 85 })
+    .toBuffer();
+};
+
+const getPublicBaseUrl = (req) => {
+  const requestBaseUrl = `${req.protocol}://${req.get('host')}`;
+  const configuredBaseUrl = (process.env.BASE_URL || '').replace(/\/$/, '');
+  const host = (req.get('host') || '').toLowerCase();
+  const isLocalRequest = host.includes('localhost') || host.startsWith('127.0.0.1');
+
+  // Local development should always return localhost URLs.
+  if (isLocalRequest || !configuredBaseUrl) {
+    return requestBaseUrl;
+  }
+
+  return configuredBaseUrl;
+};
+
 // Generate unique filename
 const generateFilename = (originalName) => {
-  const ext = path.extname(originalName);
   const randomString = crypto.randomBytes(16).toString('hex');
   const timestamp = Date.now();
-  return `${timestamp}-${randomString}${ext}`;
+  // Sharp outputs JPEG in this controller, so keep extension consistent.
+  return `${timestamp}-${randomString}.jpg`;
 };
 
 // Upload single image to local storage
@@ -28,24 +146,20 @@ exports.uploadImage = async (req, res) => {
       return res.status(400).json({ message: 'No image file provided' });
     }
 
-    await ensureUploadsDir();
-
     // Generate unique filename
     const filename = generateFilename(req.file.originalname);
-    const filepath = path.join(uploadsDir, filename);
+    const optimizedBuffer = await optimizeImageToBuffer(req.file.buffer);
 
-    // Process and save image with sharp (resize and optimize)
-    await sharp(req.file.buffer)
-      .resize(1920, 1080, {
-        fit: 'inside',
-        withoutEnlargement: true
-      })
-      .jpeg({ quality: 85 })
-      .toFile(filepath);
+    if (isFtpConfigured()) {
+      await uploadBufferToFtp(optimizedBuffer, filename);
+    } else {
+      await ensureUploadsDir();
+      const filepath = path.join(uploadsDir, filename);
+      await fs.writeFile(filepath, optimizedBuffer);
+    }
 
     // Generate URL path
-    const baseUrl = process.env.BASE_URL || req.protocol + '://' + req.get('host');
-    const imageUrl = `${baseUrl}/uploads/${filename}`;
+    const imageUrl = `${getPublicUploadBaseUrl(req)}/${filename}`;
 
     res.status(200).json({
       message: 'Image uploaded successfully',
@@ -68,23 +182,19 @@ exports.uploadMultipleImages = async (req, res) => {
       return res.status(400).json({ message: 'No image files provided' });
     }
 
-    await ensureUploadsDir();
-
     const uploadPromises = req.files.map(async (file) => {
       const filename = generateFilename(file.originalname);
-      const filepath = path.join(uploadsDir, filename);
+      const optimizedBuffer = await optimizeImageToBuffer(file.buffer);
 
-      // Process and save image with sharp
-      await sharp(file.buffer)
-        .resize(1920, 1080, {
-          fit: 'inside',
-          withoutEnlargement: true
-        })
-        .jpeg({ quality: 85 })
-        .toFile(filepath);
+      if (isFtpConfigured()) {
+        await uploadBufferToFtp(optimizedBuffer, filename);
+      } else {
+        await ensureUploadsDir();
+        const filepath = path.join(uploadsDir, filename);
+        await fs.writeFile(filepath, optimizedBuffer);
+      }
 
-      const baseUrl = process.env.BASE_URL || req.protocol + '://' + req.get('host');
-      const imageUrl = `${baseUrl}/uploads/${filename}`;
+      const imageUrl = `${getPublicUploadBaseUrl(req)}/${filename}`;
 
       return {
         url: imageUrl,
@@ -116,13 +226,20 @@ exports.deleteImage = async (req, res) => {
       return res.status(400).json({ message: 'No filename provided' });
     }
 
+    if (isFtpConfigured()) {
+      const deleted = await deleteFileFromFtp(filename);
+      if (!deleted) {
+        return res.status(404).json({ message: 'Image file not found' });
+      }
+      return res.status(200).json({ message: 'Image deleted successfully' });
+    }
+
     const filepath = path.join(uploadsDir, filename);
 
-    // Check if file exists
     try {
       await fs.access(filepath);
       await fs.unlink(filepath);
-      res.status(200).json({ message: 'Image deleted successfully' });
+      return res.status(200).json({ message: 'Image deleted successfully' });
     } catch (error) {
       if (error.code === 'ENOENT') {
         return res.status(404).json({ message: 'Image file not found' });
@@ -146,10 +263,15 @@ exports.deleteMultipleImages = async (imageUrls) => {
     try {
       // Extract filename from URL
       const filename = path.basename(url);
-      const filepath = path.join(uploadsDir, filename);
-      
-      await fs.access(filepath);
-      await fs.unlink(filepath);
+
+      if (isFtpConfigured()) {
+        await deleteFileFromFtp(filename);
+      } else {
+        const filepath = path.join(uploadsDir, filename);
+        await fs.access(filepath);
+        await fs.unlink(filepath);
+      }
+
       console.log(`Deleted image: ${filename}`);
     } catch (error) {
       console.error(`Failed to delete image ${url}:`, error.message);
