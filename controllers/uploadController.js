@@ -2,109 +2,23 @@ const fs = require('fs').promises;
 const path = require('path');
 const sharp = require('sharp');
 const crypto = require('crypto');
-const ftp = require('basic-ftp');
-const { Readable } = require('stream');
+const cloudinary = require('../config/cloudinary');
 
-// Create uploads directory if it doesn't exist
 const uploadsDir = path.join(__dirname, '../uploads');
-const ensureUploadsDir = async () => {
-  try {
-    await fs.access(uploadsDir);
-  } catch {
-    await fs.mkdir(uploadsDir, { recursive: true });
-  }
-};
 
-const isFtpConfigured = () => {
-  return Boolean(
-    process.env.HOSTINGER_FTP_HOST &&
-    process.env.HOSTINGER_FTP_USERNAME &&
-    process.env.HOSTINGER_FTP_PASSWORD
+const stripImageExtension = (value = '') =>
+  value.replace(/\.(jpg|jpeg|png|webp|gif|avif|bmp|tiff)$/i, '');
+
+const isCloudinaryConfigured = () =>
+  Boolean(
+    process.env.CLOUDINARY_CLOUD_NAME &&
+      process.env.CLOUDINARY_API_KEY &&
+      process.env.CLOUDINARY_API_SECRET
   );
-};
 
-const getFtpRemotePath = () => {
-  const remotePath = process.env.HOSTINGER_FTP_REMOTE_PATH || '/nodejs/uploads';
-  return remotePath.replace(/\\/g, '/').replace(/\/$/, '');
-};
-
-const getFtpMirrorPath = () => {
-  const mirrorPath = (process.env.HOSTINGER_FTP_MIRROR_PATH || '').trim();
-  if (!mirrorPath) return null;
-  return mirrorPath.replace(/\\/g, '/').replace(/\/$/, '');
-};
-
-const getPublicUploadBaseUrl = (req) => {
-  const ftpPublicUrl = (process.env.HOSTINGER_PUBLIC_URL || '').replace(/\/$/, '');
-  if (isFtpConfigured() && ftpPublicUrl) {
-    return ftpPublicUrl;
-  }
-
-  return `${getPublicBaseUrl(req)}/uploads`;
-};
-
-const withFtpClient = async (callback) => {
-  const client = new ftp.Client(15000);
-  client.ftp.verbose = false;
-
-  try {
-    await client.access({
-      host: process.env.HOSTINGER_FTP_HOST,
-      port: Number(process.env.HOSTINGER_FTP_PORT || 21),
-      user: process.env.HOSTINGER_FTP_USERNAME,
-      password: process.env.HOSTINGER_FTP_PASSWORD,
-      secure: process.env.HOSTINGER_FTP_SECURE === 'true'
-    });
-
-    return await callback(client);
-  } finally {
-    client.close();
-  }
-};
-
-const uploadBufferToFtp = async (buffer, filename) => {
-  const remoteDirectory = getFtpRemotePath();
-  const mirrorDirectory = getFtpMirrorPath();
-
-  await withFtpClient(async (client) => {
-    await client.ensureDir(remoteDirectory);
-    await client.uploadFrom(Readable.from(buffer), filename);
-
-    if (mirrorDirectory && mirrorDirectory !== remoteDirectory) {
-      await client.ensureDir(mirrorDirectory);
-      await client.uploadFrom(Readable.from(buffer), filename);
-    }
-  });
-};
-
-const deleteFileFromFtp = async (filename) => {
-  const remoteFilePath = path.posix.join(getFtpRemotePath(), filename);
-  const mirrorDirectory = getFtpMirrorPath();
-  const mirrorFilePath = mirrorDirectory ? path.posix.join(mirrorDirectory, filename) : null;
-
-  try {
-    await withFtpClient(async (client) => {
-      await client.remove(remoteFilePath);
-
-      if (mirrorFilePath) {
-        try {
-          await client.remove(mirrorFilePath);
-        } catch (error) {
-          const msg = String(error?.message || '').toLowerCase();
-          if (!msg.includes('no such file') && !msg.includes('550')) {
-            throw error;
-          }
-        }
-      }
-    });
-    return true;
-  } catch (error) {
-    const msg = String(error?.message || '').toLowerCase();
-    if (msg.includes('no such file') || msg.includes('550')) {
-      return false;
-    }
-    throw error;
-  }
+const getCloudinaryFolder = () => {
+  const folder = (process.env.CLOUDINARY_FOLDER || 'basera').trim();
+  return folder.replace(/^\/+|\/+$/g, '');
 };
 
 const optimizeImageToBuffer = async (buffer) => {
@@ -117,164 +31,290 @@ const optimizeImageToBuffer = async (buffer) => {
     .toBuffer();
 };
 
-const getPublicBaseUrl = (req) => {
-  const requestBaseUrl = `${req.protocol}://${req.get('host')}`;
-  const configuredBaseUrl = (process.env.BASE_URL || '').replace(/\/$/, '');
-  const host = (req.get('host') || '').toLowerCase();
-  const isLocalRequest = host.includes('localhost') || host.startsWith('127.0.0.1');
+const generatePublicId = () => {
+  const randomString = crypto.randomBytes(16).toString('hex');
+  return `${Date.now()}-${randomString}`;
+};
 
-  // Local development should always return localhost URLs.
-  if (isLocalRequest || !configuredBaseUrl) {
-    return requestBaseUrl;
+const uploadBufferToCloudinary = async (buffer) => {
+  const folder = getCloudinaryFolder();
+
+  return new Promise((resolve, reject) => {
+    const uploadStream = cloudinary.uploader.upload_stream(
+      {
+        resource_type: 'image',
+        folder,
+        public_id: generatePublicId(),
+        format: 'jpg',
+        overwrite: false
+      },
+      (error, result) => {
+        if (error) {
+          return reject(error);
+        }
+        resolve(result);
+      }
+    );
+
+    uploadStream.end(buffer);
+  });
+};
+
+const extractCloudinaryPublicIdFromUrl = (url) => {
+  try {
+    const parsed = new URL(url);
+    if (!parsed.hostname.includes('res.cloudinary.com')) {
+      return null;
+    }
+
+    const pathSegments = parsed.pathname.split('/').filter(Boolean);
+    const uploadIndex = pathSegments.indexOf('upload');
+
+    if (uploadIndex === -1 || uploadIndex >= pathSegments.length - 1) {
+      return null;
+    }
+
+    let publicIdSegments = pathSegments.slice(uploadIndex + 1);
+    const versionIndex = publicIdSegments.findIndex((segment) => /^v\d+$/.test(segment));
+
+    if (versionIndex !== -1) {
+      publicIdSegments = publicIdSegments.slice(versionIndex + 1);
+    }
+
+    if (publicIdSegments.length === 0) {
+      return null;
+    }
+
+    const lastIndex = publicIdSegments.length - 1;
+    publicIdSegments[lastIndex] = stripImageExtension(publicIdSegments[lastIndex]);
+
+    return publicIdSegments.join('/');
+  } catch {
+    return null;
+  }
+};
+
+const resolveCloudinaryPublicId = (value, allowSimplePublicId = false) => {
+  if (!value || typeof value !== 'string') {
+    return null;
   }
 
-  return configuredBaseUrl;
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  if (/^https?:\/\//i.test(trimmed)) {
+    return extractCloudinaryPublicIdFromUrl(trimmed);
+  }
+
+  if (trimmed.includes('/')) {
+    return stripImageExtension(trimmed.replace(/^\/+|\/+$/g, ''));
+  }
+
+  if (allowSimplePublicId) {
+    return stripImageExtension(trimmed);
+  }
+
+  return null;
 };
 
-// Generate unique filename
-const generateFilename = (originalName) => {
-  const randomString = crypto.randomBytes(16).toString('hex');
-  const timestamp = Date.now();
-  // Sharp outputs JPEG in this controller, so keep extension consistent.
-  return `${timestamp}-${randomString}.jpg`;
+const extractLegacyFilename = (value) => {
+  if (!value || typeof value !== 'string') {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  if (/^https?:\/\//i.test(trimmed)) {
+    try {
+      const parsed = new URL(trimmed);
+      if (!parsed.pathname.includes('/uploads/')) {
+        return null;
+      }
+      return path.basename(parsed.pathname);
+    } catch {
+      return null;
+    }
+  }
+
+  if (trimmed.includes('/')) {
+    if (!trimmed.includes('/uploads/')) {
+      return null;
+    }
+    return path.basename(trimmed);
+  }
+
+  return trimmed;
 };
 
-// Upload single image to local storage
+const deleteLegacyLocalImageByFilename = async (filename) => {
+  const filepath = path.join(uploadsDir, filename);
+  try {
+    await fs.access(filepath);
+    await fs.unlink(filepath);
+    return true;
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      return false;
+    }
+    throw error;
+  }
+};
+
+const deleteCloudinaryImageByPublicId = async (publicId) => {
+  const result = await cloudinary.uploader.destroy(publicId, {
+    resource_type: 'image',
+    invalidate: true
+  });
+  return result?.result;
+};
+
+const toImageResponse = (uploadResult) => ({
+  url: uploadResult.secure_url,
+  filename: uploadResult.public_id,
+  publicId: uploadResult.public_id
+});
+
+// Upload single image to Cloudinary
 exports.uploadImage = async (req, res) => {
   try {
+    if (!isCloudinaryConfigured()) {
+      return res.status(500).json({ message: 'Cloudinary is not configured on server' });
+    }
+
     if (!req.file) {
       return res.status(400).json({ message: 'No image file provided' });
     }
 
-    // Generate unique filename
-    const filename = generateFilename(req.file.originalname);
     const optimizedBuffer = await optimizeImageToBuffer(req.file.buffer);
+    const uploadResult = await uploadBufferToCloudinary(optimizedBuffer);
 
-    if (isFtpConfigured()) {
-      await uploadBufferToFtp(optimizedBuffer, filename);
-    } else {
-      await ensureUploadsDir();
-      const filepath = path.join(uploadsDir, filename);
-      await fs.writeFile(filepath, optimizedBuffer);
-    }
-
-    // Generate URL path
-    const imageUrl = `${getPublicUploadBaseUrl(req)}/${filename}`;
-
-    res.status(200).json({
+    return res.status(200).json({
       message: 'Image uploaded successfully',
-      url: imageUrl,
-      filename: filename
+      ...toImageResponse(uploadResult)
     });
   } catch (error) {
     console.error('Upload error:', error);
-    res.status(500).json({ 
+    return res.status(500).json({
       message: 'Server error during image upload',
-      error: error.message 
+      error: error.message
     });
   }
 };
 
-// Upload multiple images to local storage
+// Upload multiple images to Cloudinary
 exports.uploadMultipleImages = async (req, res) => {
   try {
+    if (!isCloudinaryConfigured()) {
+      return res.status(500).json({ message: 'Cloudinary is not configured on server' });
+    }
+
     if (!req.files || req.files.length === 0) {
       return res.status(400).json({ message: 'No image files provided' });
     }
 
     const uploadPromises = req.files.map(async (file) => {
-      const filename = generateFilename(file.originalname);
       const optimizedBuffer = await optimizeImageToBuffer(file.buffer);
-
-      if (isFtpConfigured()) {
-        await uploadBufferToFtp(optimizedBuffer, filename);
-      } else {
-        await ensureUploadsDir();
-        const filepath = path.join(uploadsDir, filename);
-        await fs.writeFile(filepath, optimizedBuffer);
-      }
-
-      const imageUrl = `${getPublicUploadBaseUrl(req)}/${filename}`;
-
-      return {
-        url: imageUrl,
-        filename: filename
-      };
+      const uploadResult = await uploadBufferToCloudinary(optimizedBuffer);
+      return toImageResponse(uploadResult);
     });
 
-    const results = await Promise.all(uploadPromises);
+    const images = await Promise.all(uploadPromises);
 
-    res.status(200).json({
+    return res.status(200).json({
       message: 'Images uploaded successfully',
-      images: results
+      images
     });
   } catch (error) {
     console.error('Multiple upload error:', error);
-    res.status(500).json({ 
+    return res.status(500).json({
       message: 'Server error during image upload',
-      error: error.message 
+      error: error.message
     });
   }
 };
 
-// Delete image from local storage
+// Delete image from Cloudinary, with legacy local cleanup fallback
 exports.deleteImage = async (req, res) => {
   try {
-    const { filename } = req.body;
+    const { filename, publicId, url } = req.body;
+    const imageRef = publicId || filename || url;
 
-    if (!filename) {
-      return res.status(400).json({ message: 'No filename provided' });
+    if (!imageRef) {
+      return res.status(400).json({ message: 'No image identifier provided' });
     }
 
-    if (isFtpConfigured()) {
-      const deleted = await deleteFileFromFtp(filename);
-      if (!deleted) {
+    const cloudinaryPublicId =
+      resolveCloudinaryPublicId(publicId, true) ||
+      resolveCloudinaryPublicId(filename) ||
+      resolveCloudinaryPublicId(url);
+
+    if (cloudinaryPublicId) {
+      if (!isCloudinaryConfigured()) {
+        return res.status(500).json({ message: 'Cloudinary is not configured on server' });
+      }
+
+      const destroyResult = await deleteCloudinaryImageByPublicId(cloudinaryPublicId);
+
+      if (destroyResult === 'ok') {
+        return res.status(200).json({ message: 'Image deleted successfully' });
+      }
+
+      if (destroyResult === 'not found') {
         return res.status(404).json({ message: 'Image file not found' });
       }
-      return res.status(200).json({ message: 'Image deleted successfully' });
+
+      return res.status(500).json({
+        message: 'Failed to delete image from Cloudinary',
+        result: destroyResult
+      });
     }
 
-    const filepath = path.join(uploadsDir, filename);
-
-    try {
-      await fs.access(filepath);
-      await fs.unlink(filepath);
-      return res.status(200).json({ message: 'Image deleted successfully' });
-    } catch (error) {
-      if (error.code === 'ENOENT') {
-        return res.status(404).json({ message: 'Image file not found' });
-      }
-      throw error;
+    const legacyFilename = extractLegacyFilename(imageRef);
+    if (!legacyFilename) {
+      return res.status(400).json({ message: 'Invalid image identifier' });
     }
+
+    const deleted = await deleteLegacyLocalImageByFilename(legacyFilename);
+    if (!deleted) {
+      return res.status(404).json({ message: 'Image file not found' });
+    }
+
+    return res.status(200).json({ message: 'Image deleted successfully' });
   } catch (error) {
     console.error('Delete error:', error);
-    res.status(500).json({ 
+    return res.status(500).json({
       message: 'Server error during image deletion',
-      error: error.message 
+      error: error.message
     });
   }
 };
 
 // Helper function to delete multiple images (used internally)
-exports.deleteMultipleImages = async (imageUrls) => {
-  if (!imageUrls || imageUrls.length === 0) return;
+exports.deleteMultipleImages = async (imageRefs) => {
+  if (!Array.isArray(imageRefs) || imageRefs.length === 0) {
+    return;
+  }
 
-  const deletePromises = imageUrls.map(async (url) => {
+  const deletePromises = imageRefs.map(async (imageRef) => {
     try {
-      // Extract filename from URL
-      const filename = path.basename(url);
+      const cloudinaryPublicId = resolveCloudinaryPublicId(imageRef);
 
-      if (isFtpConfigured()) {
-        await deleteFileFromFtp(filename);
-      } else {
-        const filepath = path.join(uploadsDir, filename);
-        await fs.access(filepath);
-        await fs.unlink(filepath);
+      if (cloudinaryPublicId && isCloudinaryConfigured()) {
+        await deleteCloudinaryImageByPublicId(cloudinaryPublicId);
+        return;
       }
 
-      console.log(`Deleted image: ${filename}`);
+      const legacyFilename = extractLegacyFilename(imageRef);
+      if (legacyFilename) {
+        await deleteLegacyLocalImageByFilename(legacyFilename);
+      }
     } catch (error) {
-      console.error(`Failed to delete image ${url}:`, error.message);
+      console.error(`Failed to delete image ${imageRef}:`, error.message);
     }
   });
 

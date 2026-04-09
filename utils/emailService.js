@@ -1,12 +1,24 @@
 const nodemailer = require('nodemailer');
 
+const SMTP_USER = (process.env.SMTP_USER || '').trim();
+const SMTP_PASS = (process.env.SMTP_PASS || '').replace(/\s+/g, '');
+const SMTP_FROM_NAME = process.env.SMTP_FROM_NAME || 'Basera Infra Home';
+
 // Create transporter for Gmail SMTP
 const createTransporter = () => {
+  if (!SMTP_USER) {
+    throw new Error('SMTP_USER is not configured');
+  }
+
+  if (!SMTP_PASS) {
+    throw new Error('SMTP_PASS is not configured');
+  }
+
   return nodemailer.createTransport({
     service: 'gmail',
     auth: {
-      user: 'baserainfrahome@gmail.com', // Replace with actual email
-      pass: 'dhbr khlx xatl kqag'
+      user: SMTP_USER,
+      pass: SMTP_PASS
     }
   });
 };
@@ -22,7 +34,7 @@ const sendOTPEmail = async (email, otp, name) => {
     const transporter = createTransporter();
 
     const mailOptions = {
-      from: '"Basera Infra Home" <baserainfrahome@gmail.com>',
+      from: `"${SMTP_FROM_NAME}" <${SMTP_USER}>`,
       to: email,
       subject: 'Email Verification - OTP',
       html: `

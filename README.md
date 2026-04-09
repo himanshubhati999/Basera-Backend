@@ -26,9 +26,23 @@ Create a `.env` file in the backend directory:
 
 ```env
 PORT=5000
-MONGODB_URI=mongodb://localhost:27017/property-db
+MONGODB_URI=mongodb+srv://<username>:<password>@<cluster>.mongodb.net/?appName=Cluster0
 JWT_SECRET=your_jwt_secret_key_here
 NODE_ENV=development
+
+# Required for OTP emails
+SMTP_USER=your_gmail_address@gmail.com
+SMTP_PASS=your_gmail_app_password
+SMTP_FROM_NAME=Basera Infra Home
+
+# Required for image uploads
+CLOUDINARY_CLOUD_NAME=your_cloud_name
+CLOUDINARY_API_KEY=your_api_key
+CLOUDINARY_API_SECRET=your_api_secret
+CLOUDINARY_FOLDER=basera
+
+# Optional: comma-separated frontend origins
+CORS_ORIGINS=https://your-frontend.vercel.app
 ```
 
 ### 3. Start MongoDB

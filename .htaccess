@@ -1,9 +1,4 @@
-# Hostinger Node.js Application Configuration
-# Hostinger's Node.js manager handles all routing automatically
-# Application should be configured in Hostinger's Node.js panel:
-# - Application Root: public_html
-# - Application Startup File: server.js  
-# - Node.js version: 20.x LTS
+# Apache configuration
 
 # Security Headers
 <IfModule mod_headers.c>

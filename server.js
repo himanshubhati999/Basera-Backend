@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
 const path = require('path');
+const mongoose = require('mongoose');
 const connectDB = require('./config/db');
 
 // Load environment variables
@@ -20,13 +21,22 @@ const app = express();
 
 // Middleware
 // Configure CORS to allow your frontend domain
-const allowedOrigins = new Set([
+const defaultAllowedOrigins = [
   'http://localhost:3000',
   'http://localhost:5173',
   'http://localhost:5174',
   'https://baserainfrahome.com',
   'http://baserainfrahome.com'
-]);
+];
+
+const envAllowedOrigins = (process.env.CORS_ORIGINS || '')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+const allowedOrigins = new Set([...defaultAllowedOrigins, ...envAllowedOrigins]);
+
+const isVercelDomain = (origin) => /^https:\/\/[a-z0-9-]+\.vercel\.app$/i.test(origin);
 
 const corsOptions = {
   origin: (origin, callback) => {
@@ -35,6 +45,11 @@ const corsOptions = {
 
     // Allow any localhost port for local frontend dev servers.
     if (/^http:\/\/localhost:\d+$/.test(origin)) {
+      return callback(null, true);
+    }
+
+    // Allow Vercel frontend deployments (preview + production subdomains)
+    if (isVercelDomain(origin)) {
       return callback(null, true);
     }
 
@@ -57,52 +72,72 @@ app.use(express.urlencoded({ extended: true }));
 let dbConnected = false;
 let connectionAttempts = 0;
 let lastConnectionError = null;
-const MAX_CONNECTION_ATTEMPTS = 3;
+
+const isMongoConnected = () => mongoose.connection.readyState === 1;
 
 const ensureDbConnection = async (req, res, next) => {
-  if (!dbConnected && connectionAttempts < MAX_CONNECTION_ATTEMPTS) {
-    try {
-      connectionAttempts++;
-      console.log(`MongoDB connection attempt ${connectionAttempts}/${MAX_CONNECTION_ATTEMPTS}`);
-      console.log('MONGODB_URI exists:', !!process.env.MONGODB_URI);
-      console.log('NODE_ENV:', process.env.NODE_ENV);
-      
-      await connectDB();
-      dbConnected = true;
-      lastConnectionError = null;
-      console.log('MongoDB connected successfully');
-    } catch (error) {
-      console.error('Database connection error:', error.message);
-      console.error('Full error:', error);
-      lastConnectionError = error.message;
-      
-      // If max attempts reached, return error
-      if (connectionAttempts >= MAX_CONNECTION_ATTEMPTS) {
-        return res.status(503).json({ 
-          success: false, 
-          message: 'Database connection failed. Please check MongoDB Atlas network access settings.',
-          error: error.message,
-          mongoUri: process.env.MONGODB_URI ? 'exists' : 'missing',
-          nodeEnv: process.env.NODE_ENV
-        });
-      }
-    }
+  // If runtime state is connected, skip reconnect attempts.
+  if (isMongoConnected()) {
+    dbConnected = true;
+    connectionAttempts = 0;
+    lastConnectionError = null;
+    return next();
   }
-  
-  // If still not connected after attempts, return error
-  if (!dbConnected) {
+
+  // Guard against stale flag values when Mongo disconnects after startup.
+  dbConnected = false;
+
+  try {
+    connectionAttempts++;
+    console.log(`MongoDB connection attempt ${connectionAttempts}`);
+    console.log('MONGODB_URI exists:', !!process.env.MONGODB_URI);
+    console.log('NODE_ENV:', process.env.NODE_ENV);
+
+    await connectDB();
+
+    if (!isMongoConnected()) {
+      throw new Error('MongoDB connection was not established');
+    }
+
+    dbConnected = true;
+    connectionAttempts = 0;
+    lastConnectionError = null;
+    console.log('MongoDB connected successfully');
+    return next();
+  } catch (error) {
+    console.error('Database connection error:', error.message);
+    console.error('Full error:', error);
+    lastConnectionError = error.message;
+
     return res.status(503).json({ 
       success: false, 
-      message: 'Database not available. Please try again later.',
-      error: lastConnectionError || 'Max connection attempts exceeded',
+      message: 'Database not available. Please check MongoDB Atlas network access settings and credentials.',
+      error: lastConnectionError,
       mongoUri: process.env.MONGODB_URI ? 'exists' : 'missing',
       nodeEnv: process.env.NODE_ENV,
       attempts: connectionAttempts
     });
   }
-  
-  next();
 };
+
+const warmUpDbConnection = async () => {
+  try {
+    await connectDB();
+
+    if (isMongoConnected()) {
+      dbConnected = true;
+      connectionAttempts = 0;
+      lastConnectionError = null;
+      console.log('MongoDB warm-up connection successful');
+    }
+  } catch (error) {
+    dbConnected = false;
+    lastConnectionError = error.message;
+    console.warn('MongoDB warm-up connection failed:', error.message);
+  }
+};
+
+warmUpDbConnection();
 
 // Health check route (NO DB REQUIRED - must be first)
 app.get('/api/health', (req, res) => {
@@ -121,7 +156,8 @@ app.get('/api/debug', (req, res) => {
     hasMongoUri: !!process.env.MONGODB_URI,
     hasJwtSecret: !!process.env.JWT_SECRET,
     mongoUriStart: process.env.MONGODB_URI ? process.env.MONGODB_URI.substring(0, 20) + '...' : 'not set',
-    dbConnected: dbConnected,
+    dbConnected: dbConnected && isMongoConnected(),
+    mongoReadyState: mongoose.connection.readyState,
     connectionAttempts: connectionAttempts,
     lastError: lastConnectionError,
     port: process.env.PORT || 3000
@@ -161,7 +197,7 @@ app.use((err, req, res, next) => {
   });
 });
 
-// Export app for Hostinger (they handle the port binding)
+// Export app for managed hosting platforms
 // Only start server locally for development
 if (require.main === module) {
   const PORT = process.env.PORT || 3000;
