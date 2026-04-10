@@ -10,12 +10,20 @@ const connectDB = async () => {
   }
 
   try {
-    // Optimize for serverless environment with more aggressive timeouts
-    const conn = await mongoose.connect(process.env.MONGODB_URI, {
-      serverSelectionTimeoutMS: 10000,
+    const mongoUri = (process.env.MONGODB_URI || '').trim();
+
+    if (!mongoUri) {
+      throw new Error('MONGODB_URI is not set');
+    }
+
+    // Optimize for serverless environment and avoid keeping idle sockets.
+    const conn = await mongoose.connect(mongoUri, {
+      serverSelectionTimeoutMS: 20000,
+      connectTimeoutMS: 20000,
       socketTimeoutMS: 45000,
       maxPoolSize: 10,
-      minPoolSize: 2,
+      minPoolSize: 0,
+      family: 4,
     });
 
     isConnected = true;

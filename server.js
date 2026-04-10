@@ -151,11 +151,18 @@ app.get('/api/health', (req, res) => {
 
 // Debug endpoint to check env vars and DB status (NO DB REQUIRED)
 app.get('/api/debug', (req, res) => {
+  const mongoUriRaw = process.env.MONGODB_URI || '';
+  const mongoUriTrimmed = mongoUriRaw.trim();
+  const mongoSchemeMatch = mongoUriTrimmed.match(/^(mongodb(?:\+srv)?):\/\//i);
+
   res.json({
     nodeEnv: process.env.NODE_ENV,
-    hasMongoUri: !!process.env.MONGODB_URI,
+    hasMongoUri: !!mongoUriRaw,
+    mongoUriHasWhitespace: mongoUriRaw !== mongoUriTrimmed,
+    mongoUriScheme: mongoSchemeMatch ? mongoSchemeMatch[1] : 'unknown',
+    mongoUriLength: mongoUriTrimmed.length,
     hasJwtSecret: !!process.env.JWT_SECRET,
-    mongoUriStart: process.env.MONGODB_URI ? process.env.MONGODB_URI.substring(0, 20) + '...' : 'not set',
+    mongoUriStart: mongoUriTrimmed ? mongoUriTrimmed.substring(0, 20) + '...' : 'not set',
     dbConnected: dbConnected && isMongoConnected(),
     mongoReadyState: mongoose.connection.readyState,
     connectionAttempts: connectionAttempts,
