@@ -153,6 +153,9 @@ app.get('/api/debug', (req, res) => {
   const mongoSchemeMatch = mongoUriTrimmed.match(/^(mongodb(?:\+srv)?):\/\//i);
   const smtpUserRaw = process.env.SMTP_USER || '';
   const smtpPassRaw = process.env.SMTP_PASS || '';
+  const smtpUserTrimmed = smtpUserRaw.trim();
+  const smtpPassTrimmed = smtpPassRaw.trim();
+  const smtpPassSanitized = smtpPassTrimmed.replace(/^['"]+|['"]+$/g, '').replace(/\s+/g, '');
 
   res.json({
     nodeEnv: process.env.NODE_ENV,
@@ -161,9 +164,11 @@ app.get('/api/debug', (req, res) => {
     mongoUriScheme: mongoSchemeMatch ? mongoSchemeMatch[1] : 'unknown',
     mongoUriLength: mongoUriTrimmed.length,
     hasJwtSecret: !!process.env.JWT_SECRET,
-    hasSmtpUser: !!smtpUserRaw.trim(),
-    hasSmtpPass: !!smtpPassRaw.replace(/\s+/g, ''),
-    smtpUserStart: smtpUserRaw ? `${smtpUserRaw.trim().substring(0, 3)}...` : 'not set',
+    hasSmtpUser: !!smtpUserTrimmed,
+    hasSmtpPass: !!smtpPassSanitized,
+    smtpUserHasWrapperQuotes: /^['"].*['"]$/.test(smtpUserTrimmed),
+    smtpPassHasWrapperQuotes: /^['"].*['"]$/.test(smtpPassTrimmed),
+    smtpUserStart: smtpUserTrimmed ? `${smtpUserTrimmed.substring(0, 3)}...` : 'not set',
     mongoUriStart: mongoUriTrimmed ? mongoUriTrimmed.substring(0, 20) + '...' : 'not set',
     dbConnected: dbConnected && isMongoConnected(),
     mongoReadyState: mongoose.connection.readyState,

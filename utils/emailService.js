@@ -1,7 +1,9 @@
 const nodemailer = require('nodemailer');
 
-const SMTP_USER = (process.env.SMTP_USER || '').trim();
-const SMTP_PASS = (process.env.SMTP_PASS || '').replace(/\s+/g, '');
+const sanitizeEnvValue = (value = '') => value.trim().replace(/^['"]+|['"]+$/g, '');
+
+const SMTP_USER = sanitizeEnvValue(process.env.SMTP_USER || '');
+const SMTP_PASS = sanitizeEnvValue(process.env.SMTP_PASS || '').replace(/\s+/g, '');
 const SMTP_FROM_NAME = process.env.SMTP_FROM_NAME || 'Basera Infra Home';
 
 // Create transporter for Gmail SMTP
