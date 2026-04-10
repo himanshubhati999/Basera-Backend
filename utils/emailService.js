@@ -126,6 +126,15 @@ const sendOTPEmail = async (email, otp, name) => {
     return { success: true, messageId: info.messageId };
   } catch (error) {
     console.error('Error sending OTP email:', error);
+
+    if (error && error.code === 'EAUTH') {
+      throw new Error('Email service authentication failed. Please verify SMTP_USER and SMTP_PASS.');
+    }
+
+    if (error && (error.code === 'ETIMEDOUT' || error.code === 'ESOCKET' || error.code === 'ECONNECTION')) {
+      throw new Error('Email service is temporarily unreachable. Please try again.');
+    }
+
     throw new Error('Failed to send OTP email');
   }
 };
