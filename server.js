@@ -95,14 +95,10 @@ const ensureDbConnection = async (req, res, next) => {
 
     await connectDB();
 
-    if (!isMongoConnected()) {
-      throw new Error('MongoDB connection was not established');
-    }
-
     dbConnected = true;
     connectionAttempts = 0;
     lastConnectionError = null;
-    console.log('MongoDB connected successfully');
+    console.log('MongoDB connected successfully. readyState:', mongoose.connection.readyState);
     return next();
   } catch (error) {
     console.error('Database connection error:', error.message);
@@ -115,7 +111,8 @@ const ensureDbConnection = async (req, res, next) => {
       error: lastConnectionError,
       mongoUri: process.env.MONGODB_URI ? 'exists' : 'missing',
       nodeEnv: process.env.NODE_ENV,
-      attempts: connectionAttempts
+      attempts: connectionAttempts,
+      mongoReadyState: mongoose.connection.readyState
     });
   }
 };

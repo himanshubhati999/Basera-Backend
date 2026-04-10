@@ -1,12 +1,18 @@
 const mongoose = require('mongoose');
 
 let isConnected = false;
+let connectPromise = null;
 
 const connectDB = async () => {
+  if (connectPromise) {
+    console.log('Waiting for in-flight MongoDB connection');
+    return connectPromise;
+  }
+
   // If already connected, return
   if (isConnected && mongoose.connection.readyState === 1) {
     console.log('Using existing MongoDB connection');
-    return;
+    return mongoose.connection;
   }
 
   try {
@@ -16,8 +22,8 @@ const connectDB = async () => {
       throw new Error('MONGODB_URI is not set');
     }
 
-    // Optimize for serverless environment and avoid keeping idle sockets.
-    const conn = await mongoose.connect(mongoUri, {
+    // Share one connection attempt between concurrent serverless requests.
+    connectPromise = mongoose.connect(mongoUri, {
       serverSelectionTimeoutMS: 20000,
       connectTimeoutMS: 20000,
       socketTimeoutMS: 45000,
@@ -25,6 +31,8 @@ const connectDB = async () => {
       minPoolSize: 0,
       family: 4,
     });
+
+    const conn = await connectPromise;
 
     isConnected = true;
     console.log(`MongoDB Connected: ${conn.connection.host}`);
@@ -36,6 +44,8 @@ const connectDB = async () => {
     
     // Always throw the error so it can be handled properly
     throw new Error(`Database connection failed: ${error.message}`);
+  } finally {
+    connectPromise = null;
   }
 };
 
